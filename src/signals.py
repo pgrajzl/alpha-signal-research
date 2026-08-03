@@ -10,21 +10,16 @@ import pandas as pd
 import numpy as np
 
 
-def momentum_12_1(close, lookback=252, skip=21):
+def momentum_naive(close, lookback=63):
     """
-    Classic 12-1 month momentum: return over the past ~12 months,
-    excluding the most recent month (to avoid short-term reversal
-    contamination).
+    Simple price momentum: total return over the trailing `lookback`
+    trading days, no skip period. Default lookback of 63 trading days
+    (~3 months).
     """
-    total_return = close.pct_change(lookback)
-    recent_return = close.pct_change(skip)
-    # 12-1 momentum = growth over the lookback period, excluding the
-    # most recent `skip` days
-    signal = (1 + total_return) / (1 + recent_return) - 1
-    return signal
+    return close.pct_change(lookback)
 
 
-def short_term_reversal(close, lookback=5):
+def mean_reversion_naive(close, lookback=5):
     """
     Short-term reversal: stocks that fell recently tend to bounce.
     Signal is the NEGATIVE of the recent return (so a big recent drop
@@ -55,18 +50,17 @@ def low_volatility(close, window=60):
 
 
 SIGNAL_LIBRARY = {
-    "Momentum_12_1": momentum_12_1,
-    "Short_Term_Reversal": short_term_reversal,
+    "Momentum": momentum_naive,
+    "Short_Term_Reversal": mean_reversion_naive,
     "Volume_Spike": volume_spike,
     "Low_Volatility": low_volatility,
 }
 
 
 def compute_all_signals(close, volume):
-    """Computes every signal in the library. Returns a dict of {name: DataFrame}."""
     signals = {}
-    signals["Momentum_12_1"] = momentum_12_1(close)
-    signals["Short_Term_Reversal"] = short_term_reversal(close)
+    signals["Momentum"] = momentum_naive(close)
+    signals["Short_Term_Reversal"] = mean_reversion_naive(close)
     signals["Volume_Spike"] = volume_spike(volume)
     signals["Low_Volatility"] = low_volatility(close)
     return signals
