@@ -149,3 +149,154 @@ def build_stock_explorer(close, universe=None):
 
     display(controls, output)
     redraw()
+
+from src.indicators import (
+    add_sma, add_ema, add_bollinger_bands, add_rsi, add_macd, add_obv,
+    OVERLAY_INDICATORS, SUBPANEL_INDICATORS
+)
+
+
+def build_stock_explorer_with_indicators(close, volume=None, universe=None):
+    """
+    Interactive dashboard: pick a ticker, an indicator, and a time
+    range. Overlay indicators (SMA/EMA/Bollinger) plot directly on the
+    price panel; subpanel indicators (Volume/OBV/RSI/MACD) get their
+    own row below. Requires `volume` for Volume/OBV to work.
+    """
+    all_tickers = sorted(close.columns.tolist())
+
+    if universe is not None:
+        sector_map = dict(zip(universe["Symbol"], universe["Sector"]))
+        display_names = {t: f"{t} ({sector_map.get(t, 'Unknown')})" for t in all_tickers}
+    else:
+        display_names = {t: t for t in all_tickers}
+    name_to_ticker = {v: k for k, v in display_names.items()}
+
+    ticker_dropdown = widgets.Dropdown(
+        options=list(display_names.values()),
+        value=display_names[all_tickers[0]],
+        description="Ticker:",
+    )
+    indicator_dropdown = widgets.Dropdown(
+        options=OVERLAY_INDICATORS + SUBPANEL_INDICATORS,
+        value="None",
+        description="Indicator:",
+    )
+    range_dropdown = widgets.Dropdown(
+        options=list(RANGE_OPTIONS.keys()),
+        value="1Y",
+        description="Range:",
+    )
+
+    controls = widgets.HBox([ticker_dropdown, indicator_dropdown, range_dropdown])
+    output = widgets.Output()
+
+    def redraw(change=None):
+        output.clear_output(wait=True)
+        ticker = name_to_ticker[ticker_dropdown.value]
+        indicator = indicator_dropdown.value
+        range_label = range_dropdown.value
+
+        price_series = close[ticker].dropna()
+        plot_price = _filter_by_range(price_series, range_label)
+
+        with output:
+            if plot_price.empty:
+                print(f"No data available for {ticker} in this range.")
+                return
+
+            needs_subpanel = indicator in SUBPANEL_INDICATORS
+
+            if needs_subpanel:
+                fig, (ax1, ax2) = plt.subplots(
+                    2, 1, figsize=(11, 7), sharex=True,
+                    gridspec_kw={"height_ratios": [3, 1.3]}
+                )
+            else:
+                fig, ax1 = plt.subplots(figsize=(11, 6))
+                ax2 = None
+
+            # --- Price panel ---
+            ax1.plot(plot_price.index, plot_price.values, color="black",
+                      linewidth=1.8, label="Close")
+
+            if indicator == "SMA 20":
+                sma = add_sma(price_series, 20)
+                ax1.plot(plot_price.index, sma.loc[plot_price.index],
+                          color="blue", linewidth=1, label="SMA 20")
+            elif indicator == "SMA 50":
+                sma = add_sma(price_series, 50)
+                ax1.plot(plot_price.index, sma.loc[plot_price.index],
+                          color="orange", linewidth=1, label="SMA 50")
+            elif indicator == "EMA 20":
+                ema = add_ema(price_series, 20)
+                ax1.plot(plot_price.index, ema.loc[plot_price.index],
+                          color="green", linewidth=1, label="EMA 20")
+            elif indicator == "Bollinger Bands":
+                mid, upper, lower = add_bollinger_bands(price_series, 20, 2)
+                ax1.plot(plot_price.index, upper.loc[plot_price.index],
+                          color="grey", linewidth=1, linestyle="--", label="Upper")
+                ax1.plot(plot_price.index, lower.loc[plot_price.index],
+                          color="grey", linewidth=1, linestyle="--", label="Lower")
+                ax1.fill_between(plot_price.index, lower.loc[plot_price.index],
+                                   upper.loc[plot_price.index], color="grey", alpha=0.1)
+
+            ax1.set_title(f"{ticker_dropdown.value} — Close Price"
+                          + (f" with {indicator}" if indicator != "None" else "")
+                          + f" ({range_label})")
+            ax1.set_ylabel("Price ($)")
+            ax1.legend(loc="upper left", fontsize=8)
+            ax1.grid(alpha=0.3)
+
+            # --- Sub-panel ---
+            if indicator == "Volume":
+                if volume is None:
+                    ax2.text(0.5, 0.5, "Volume data not provided", ha="center")
+                else:
+                    vol_series = _filter_by_range(volume[ticker].dropna(), range_label)
+                    ax2.bar(vol_series.index, vol_series.values, color="lightblue", width=1.0)
+                    ax2.set_ylabel("Volume")
+
+            elif indicator == "OBV":
+                if volume is None:
+                    ax2.text(0.5, 0.5, "Volume data not provided", ha="center")
+                else:
+                    obv = add_obv(price_series, volume[ticker])
+                    ax2.plot(plot_price.index, obv.loc[plot_price.index],
+                              color="purple", linewidth=1.2)
+                    ax2.set_ylabel("OBV")
+
+            elif indicator == "RSI":
+                rsi = add_rsi(price_series, 14)
+                ax2.plot(plot_price.index, rsi.loc[plot_price.index],
+                          color="teal", linewidth=1.2)
+                ax2.axhline(70, color="red", linestyle="--", linewidth=0.8)
+                ax2.axhline(30, color="green", linestyle="--", linewidth=0.8)
+                ax2.set_ylabel("RSI")
+                ax2.set_ylim(0, 100)
+
+            elif indicator == "MACD":
+                macd_line, signal_line, hist = add_macd(price_series)
+                ax2.plot(plot_price.index, macd_line.loc[plot_price.index],
+                          color="blue", linewidth=1.1, label="MACD")
+                ax2.plot(plot_price.index, signal_line.loc[plot_price.index],
+                          color="orange", linewidth=1.1, label="Signal")
+                ax2.bar(plot_price.index, hist.loc[plot_price.index],
+                         color="grey", alpha=0.5, width=1.0)
+                ax2.set_ylabel("MACD")
+                ax2.legend(loc="upper left", fontsize=8)
+
+            if ax2 is not None:
+                ax2.grid(alpha=0.3)
+                ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+
+            fig.autofmt_xdate()
+            plt.tight_layout()
+            plt.show()
+
+    ticker_dropdown.observe(redraw, names="value")
+    indicator_dropdown.observe(redraw, names="value")
+    range_dropdown.observe(redraw, names="value")
+
+    display(controls, output)
+    redraw()
