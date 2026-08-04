@@ -19,6 +19,8 @@ def compute_forward_returns(close, horizon=5):
     """
     return close.pct_change(horizon).shift(-horizon)
 
+import warnings
+from scipy.stats import ConstantInputWarning
 
 def compute_ic_series(signal_df, forward_returns_df):
     """
@@ -26,6 +28,9 @@ def compute_ic_series(signal_df, forward_returns_df):
     signal's cross-sectional scores and the forward returns across all
     tickers. Returns a Series of IC values indexed by date.
     """
+
+    warnings.filterwarnings("ignore", category=ConstantInputWarning)
+    
     ic_values = {}
     for date in signal_df.index:
         sig_row = signal_df.loc[date].dropna()

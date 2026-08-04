@@ -117,6 +117,69 @@ def extreme_drawdown_bounce_naive(close, drawdown_window=3, vol_lookback_days=20
 
     return signal
 
+def rate_sensitivity_naive(returns, yield_10y, beta_window=60, yield_change_lookback=5):
+    """
+    Naive rate sensitivity signal: for each stock, estimates a rolling
+    "rate beta" (sensitivity of the stock's daily returns to daily
+    changes in the 10Y Treasury yield), then multiplies that beta by
+    the recent cumulative change in the 10Y yield.
+
+    returns: stock daily returns (dates x tickers)
+    yield_10y: a Series of 10Y yield levels (e.g. macro_df["DGS10"])
+    beta_window: rolling window (trading days) used to estimate rate beta
+    yield_change_lookback: number of days over which the recent yield
+        change is measured
+
+    Note: rate beta is estimated via rolling covariance/variance
+    (equivalent to a rolling OLS beta with the yield as the single
+    regressor), which is far faster than looping a regression per
+    ticker per date.
+    """
+    daily_yield_change = yield_10y.diff()
+    aligned_daily_change = daily_yield_change.reindex(returns.index).ffill()
+
+    recent_yield_move = yield_10y.diff(yield_change_lookback).reindex(returns.index).ffill()
+
+    signal = pd.DataFrame(index=returns.index, columns=returns.columns, dtype=float)
+
+    for ticker in returns.columns:
+        stock_returns = returns[ticker]
+        rolling_cov = stock_returns.rolling(beta_window).cov(aligned_daily_change)
+        rolling_var = aligned_daily_change.rolling(beta_window).var()
+        rate_beta = rolling_cov / rolling_var
+
+        signal[ticker] = rate_beta * recent_yield_move
+
+    return signal
+
+def evaluate_rate_sensitivity(beta_window, yield_change_lookback, horizon,
+                                 returns, yield_10y, close):
+    """
+    Evaluation wrapper for rate_sensitivity_naive, used for parallel
+    grid search. Must live in a real module (not defined inline in a
+    notebook) since multiprocessing on macOS uses spawn, which
+    requires functions to be importable by module path.
+    """
+    from src.evaluation import compute_forward_returns, compute_ic_series, summarize_ic
+
+    signal = rate_sensitivity_naive(
+        returns, yield_10y,
+        beta_window=beta_window,
+        yield_change_lookback=yield_change_lookback,
+    )
+    fwd_returns = compute_forward_returns(close, horizon=horizon)
+    ic_series = compute_ic_series(signal, fwd_returns)
+
+    if len(ic_series) < 10:
+        return {"mean_ic": float("nan"), "information_ratio": float("nan"), "n_obs": len(ic_series)}
+
+    summary = summarize_ic(ic_series)
+    return {
+        "mean_ic": summary["Mean IC"],
+        "information_ratio": summary["Information Ratio"],
+        "n_obs": summary["N Observations"],
+    }
+
 
 SIGNAL_LIBRARY = {
     "Momentum": momentum_naive,
@@ -124,7 +187,8 @@ SIGNAL_LIBRARY = {
     "Volume_Spike": volume_spike,
     "Low_Volatility": low_volatility,
     "Momentum_Reversal_Hybrid": momentum_reversion_sector_conditional_naive,
-    "Extreme_Drawdown_Bounce": extreme_drawdown_bounce_naive
+    "Extreme_Drawdown_Bounce": extreme_drawdown_bounce_naive,
+    "Rate_Sensitivity": rate_sensitivity_naive
 }
 
 
