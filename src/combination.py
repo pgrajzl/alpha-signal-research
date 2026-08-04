@@ -11,6 +11,8 @@ unseen, to test data.
 import pandas as pd
 import numpy as np
 
+from src.signals import momentum_naive, mean_reversion_naive, momentum_reversion_sector_conditional_naive
+
 
 def zscore_signal(signal_df):
     """Cross-sectionally z-scores a signal (per date, across tickers)."""
@@ -100,3 +102,89 @@ def walk_forward_combine(signals_dict, close, horizon=5, train_years=2, test_mon
     weight_log_df = pd.DataFrame(weight_log)
 
     return combined_oos, weight_log_df
+
+def determine_sector_regime(close, universe, train_start, train_end,
+                              momentum_lookback, reversal_lookback, horizon):
+    """
+    For each sector, compares momentum vs. reversal mean IC using ONLY
+    the training window, and assigns each sector to whichever signal
+    performed better during that window. This is the piece that makes
+    sector assignment genuinely walk-forward rather than fixed from
+    the full-sample view.
+    """
+    from src.evaluation import compute_ic_by_sector
+
+    momentum_signal = momentum_naive(close, lookback=momentum_lookback)
+    reversal_signal = mean_reversion_naive(close, lookback=reversal_lookback)
+
+    # Restrict evaluation to the training window's dates only
+    train_momentum = momentum_signal.loc[train_start:train_end]
+    train_reversal = reversal_signal.loc[train_start:train_end]
+
+    mom_by_sector = compute_ic_by_sector(train_momentum, close, universe, horizon=horizon)
+    rev_by_sector = compute_ic_by_sector(train_reversal, close, universe, horizon=horizon)
+
+    momentum_sectors, reversal_sectors = [], []
+    for sector in universe["Sector"].unique():
+        mom_ic = mom_by_sector["mean_ic"].get(sector, float("-inf"))
+        rev_ic = rev_by_sector["mean_ic"].get(sector, float("-inf"))
+
+        # Only assign a sector if at least one signal shows a positive edge;
+        # otherwise leave it out of the composite entirely for this window
+        if mom_ic <= 0 and rev_ic <= 0:
+            continue
+        if mom_ic > rev_ic:
+            momentum_sectors.append(sector)
+        else:
+            reversal_sectors.append(sector)
+
+    return momentum_sectors, reversal_sectors
+
+
+def walk_forward_sector_conditional_composite(close, universe, momentum_lookback, reversal_lookback,
+                                                  horizon, train_years=2, test_months=6, expanding=True):
+    """
+    Full walk-forward version of the sector-conditional composite:
+    for each window, sector assignments are derived strictly from the
+    training period, then applied to build and evaluate the composite
+    on the following, never-before-seen test period.
+
+    expanding=True: training window grows over time (default)
+    expanding=False: training window stays a fixed length, rolling forward
+    """
+    from src.walk_forward import generate_walk_forward_windows
+    from src.evaluation import compute_forward_returns, compute_ic_series
+
+    windows = generate_walk_forward_windows(close.index, train_years, test_months, expanding=expanding)
+    fwd_returns = compute_forward_returns(close, horizon=horizon)
+
+    all_test_ic = []
+    regime_log = []
+
+    for train_start, train_end, test_start, test_end in windows:
+        momentum_sectors, reversal_sectors = determine_sector_regime(
+            close, universe, train_start, train_end,
+            momentum_lookback, reversal_lookback, horizon
+        )
+        regime_log.append({
+            "test_start": test_start, "test_end": test_end,
+            "momentum_sectors": momentum_sectors, "reversal_sectors": reversal_sectors,
+        })
+
+        composite = momentum_reversion_sector_conditional_naive(
+            close, universe,
+            momentum_sectors=momentum_sectors,
+            reversal_sectors=reversal_sectors,
+            momentum_lookback=momentum_lookback,
+            reversal_lookback=reversal_lookback,
+        )
+
+        test_composite = composite.loc[test_start:test_end]
+        test_returns = fwd_returns.loc[test_start:test_end]
+        ic_series = compute_ic_series(test_composite, test_returns)
+        all_test_ic.append(ic_series)
+
+    oos_ic = pd.concat(all_test_ic).sort_index()
+    regime_log_df = pd.DataFrame(regime_log)
+
+    return oos_ic, regime_log_df
