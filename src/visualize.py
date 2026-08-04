@@ -313,3 +313,64 @@ def plot_ic_by_sector(sector_ic_df, signal_name, color="steelblue"):
     OUTPUT_DIR.mkdir(exist_ok=True)
     plt.savefig(OUTPUT_DIR / f"ic_by_sector_{signal_name}.png", dpi=150)
     plt.show()
+
+def build_macro_explorer(macro_df, series_labels=None):
+    """
+    Interactive dashboard: pick any macro series and a time range, and
+    plot it over that window. Sparse series (monthly/quarterly data
+    like GDP or CPI) are forward-filled for continuous plotting, since
+    their native release frequency leaves gaps that would otherwise
+    show up as broken lines.
+    """
+    all_series = sorted(macro_df.columns.tolist())
+
+    if series_labels is not None:
+        display_names = {s: f"{s} ({series_labels.get(s, s)})" for s in all_series}
+    else:
+        display_names = {s: s for s in all_series}
+    name_to_series = {v: k for k, v in display_names.items()}
+
+    series_dropdown = widgets.Dropdown(
+        options=list(display_names.values()),
+        value=display_names[all_series[0]],
+        description="Series:",
+    )
+    range_dropdown = widgets.Dropdown(
+        options=list(RANGE_OPTIONS.keys()),
+        value="All",
+        description="Range:",
+    )
+
+    controls = widgets.HBox([series_dropdown, range_dropdown])
+    output = widgets.Output()
+
+    def redraw(change=None):
+        output.clear_output(wait=True)
+        series_code = name_to_series[series_dropdown.value]
+
+        # Forward-fill to handle sparse/lower-frequency series (monthly,
+        # quarterly) so the line plots continuously rather than showing
+        # gaps between release dates
+        series_data = macro_df[series_code].ffill().dropna()
+        plot_data = _filter_by_range(series_data, range_dropdown.value)
+
+        with output:
+            if plot_data.empty:
+                print(f"No data available for {series_code} in this range.")
+                return
+
+            fig, ax = plt.subplots(figsize=(11, 5))
+            ax.plot(plot_data.index, plot_data.values, color="black", linewidth=1.8)
+            ax.set_title(f"{series_dropdown.value} ({range_dropdown.value})")
+            ax.set_ylabel("Value")
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+            ax.grid(alpha=0.3)
+            fig.autofmt_xdate()
+            plt.tight_layout()
+            plt.show()
+
+    series_dropdown.observe(redraw, names="value")
+    range_dropdown.observe(redraw, names="value")
+
+    display(controls, output)
+    redraw()
