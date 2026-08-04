@@ -11,6 +11,7 @@ cycler==0.12.1
 debugpy==1.8.21
 executing==2.2.1
 fonttools==4.63.0
+fredapi==0.5.2
 idna==3.18
 ipykernel==7.3.0
 ipython==9.16.0
@@ -43,6 +44,7 @@ pycparser==3.0
 Pygments==2.20.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
 pytz==2026.3.post1
 pyzmq==27.1.0
 requests==2.34.2

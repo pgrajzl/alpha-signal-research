@@ -93,3 +93,25 @@ def compute_ic_by_sector(signal_df, close, universe, horizon, min_sector_size=5)
         }
 
     return pd.DataFrame(sector_results).T.sort_values("mean_ic", ascending=False)
+
+def compute_event_study_returns(signal_df, close, horizon=5):
+    """
+    For sparse, threshold-based signals, standard cross-sectional IC
+    dilutes the effect since most stock-days score 0. This instead
+    isolates every flagged event and computes forward returns only
+    for those specific stock-date pairs, which is the more appropriate
+    way to evaluate an infrequent-event signal.
+    """
+    forward_returns = compute_forward_returns(close, horizon=horizon)
+
+    flagged = signal_df[signal_df != 0].stack()
+    event_dates = flagged.index
+
+    event_returns = []
+    for date, ticker in event_dates:
+        if date in forward_returns.index and ticker in forward_returns.columns:
+            ret = forward_returns.loc[date, ticker]
+            if pd.notna(ret):
+                event_returns.append(ret)
+
+    return pd.Series(event_returns)

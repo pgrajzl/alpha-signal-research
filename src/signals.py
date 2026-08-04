@@ -72,13 +72,59 @@ def momentum_reversion_sector_conditional_naive(close, universe, momentum_sector
 
     return composite
 
+def extreme_drawdown_bounce_naive(close, drawdown_window=3, vol_lookback_days=20, threshold_std=2.0):
+    """
+    Flags stocks that experienced a statistically extreme drawdown
+    (relative to their own recent volatility) over a short window, on
+    the premise that extreme, panic-driven moves are more likely to
+    mechanically overshoot and bounce back than routine moves.
+
+    Unlike mean_reversion_naive (continuous, linear in the recent
+    return), this only assigns a nonzero score to moves that cross a
+    volatility-adjusted threshold — testing specifically whether
+    extreme moves behave differently than garden-variety ones.
+
+    drawdown_window: number of trading days over which cumulative
+        drawdown is measured
+    vol_lookback_days: number of trading days used to estimate each
+        stock's own recent daily volatility
+    threshold_std: how many standard deviations of daily vol the
+        drawdown must exceed to be flagged as significant (default
+        2 sigma)
+
+    Returns a signal where flagged stocks get a positive score sized
+    by how far beyond the threshold they fell, and all other stocks
+    get 0.
+    """
+    # Cumulative return over the drawdown window
+    cumulative_return = close.pct_change(drawdown_window)
+
+    # Daily return volatility over the lookback period, scaled to
+    # match the drawdown window (volatility scales with sqrt(time))
+    daily_returns = close.pct_change()
+    daily_vol = daily_returns.rolling(vol_lookback_days).std()
+    window_vol = daily_vol * (drawdown_window ** 0.5)
+
+    # z-score of the move relative to the stock's own typical volatility
+    # over a window of this length
+    z_score = cumulative_return / window_vol
+
+    # Only flag drawdowns beyond -threshold_std; everything else gets 0.
+    # Score scales with how far past the threshold the move went, so a
+    # -4 sigma drop scores higher than a -2.1 sigma drop.
+    is_extreme_drawdown = z_score <= -threshold_std
+    signal = (-z_score - threshold_std).where(is_extreme_drawdown, 0)
+
+    return signal
+
 
 SIGNAL_LIBRARY = {
     "Momentum": momentum_naive,
     "Short_Term_Reversal": mean_reversion_naive,
     "Volume_Spike": volume_spike,
     "Low_Volatility": low_volatility,
-    "Momentum_Reversal_Hybrid": momentum_reversion_sector_conditional_naive
+    "Momentum_Reversal_Hybrid": momentum_reversion_sector_conditional_naive,
+    "Extreme_Drawdown_Bounce": extreme_drawdown_bounce_naive
 }
 
 
