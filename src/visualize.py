@@ -300,3 +300,16 @@ def build_stock_explorer_with_indicators(close, volume=None, universe=None):
 
     display(controls, output)
     redraw()
+
+def plot_ic_by_sector(sector_ic_df, signal_name, color="steelblue"):
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    ax.barh(sector_ic_df.index, sector_ic_df["mean_ic"], color=color)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_title(f"{signal_name} — Mean IC by Sector", fontsize=11)
+    ax.set_xlabel("Mean IC", fontsize=9)
+    ax.tick_params(labelsize=8)
+    ax.grid(alpha=0.3, axis="x")
+    plt.tight_layout()
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    plt.savefig(OUTPUT_DIR / f"ic_by_sector_{signal_name}.png", dpi=150)
+    plt.show()

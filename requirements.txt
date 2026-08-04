@@ -47,6 +47,7 @@ pytz==2026.3.post1
 pyzmq==27.1.0
 requests==2.34.2
 scipy==1.18.0
+seaborn==0.13.2
 six==1.17.0
 soupsieve==2.9.1
 stack-data==0.6.3

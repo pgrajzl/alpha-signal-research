@@ -68,3 +68,28 @@ def compute_decay_curve(signal_df, close, horizons=(1, 5, 10, 20, 40)):
         ic_series = compute_ic_series(signal_df, fwd_returns)
         decay[h] = ic_series.mean()
     return pd.Series(decay)
+
+def compute_ic_by_sector(signal_df, close, universe, horizon, min_sector_size=5):
+    """
+    Computes mean IC separately within each GICS sector, to check
+    whether a signal's effect is broad-based across the market or
+    concentrated in a handful of sectors. `universe` is the DataFrame
+    with Symbol/Sector columns from get_sp500_universe().
+    """
+    fwd_returns = compute_forward_returns(close, horizon=horizon)
+    sector_map = dict(zip(universe["Symbol"], universe["Sector"]))
+
+    sector_results = {}
+    for sector in universe["Sector"].unique():
+        sector_tickers = [t for t, s in sector_map.items()
+                           if s == sector and t in signal_df.columns]
+        if len(sector_tickers) < min_sector_size:
+            continue
+
+        ic_series = compute_ic_series(signal_df[sector_tickers], fwd_returns[sector_tickers])
+        sector_results[sector] = {
+            "mean_ic": ic_series.mean(),
+            "n_stocks": len(sector_tickers),
+        }
+
+    return pd.DataFrame(sector_results).T.sort_values("mean_ic", ascending=False)
