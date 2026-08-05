@@ -100,3 +100,77 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+import time
+
+INTRADAY_START = "2026-07-01"
+INTRADAY_END = "2026-08-05"  # yfinance end date is exclusive, so this captures through Aug 4 EOD
+
+
+def fetch_intraday_data(tickers, start=INTRADAY_START, end=INTRADAY_END,
+                          interval="5m", batch_size=10, pause=2):
+    """
+    Downloads intraday OHLCV bars for a list of tickers. Note: yfinance
+    restricts 1-minute data to the trailing 7 days regardless of the
+    requested range, so 5-minute bars are used by default to cover a
+    full month-plus range while still being granular enough for VWAP.
+
+    Returns a dict of {ticker: DataFrame}, since intraday data doesn't
+    combine cleanly into one wide DataFrame the way daily close prices
+    do (each ticker has its own timestamp index with gaps for non-
+    trading hours).
+    """
+    import yfinance as yf
+
+    intraday_data = {}
+    n_batches = -(-len(tickers) // batch_size)
+
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        batch_num = i // batch_size + 1
+        print(f"Fetching intraday batch {batch_num} / {n_batches} ({len(batch)} tickers)...")
+
+        for ticker in batch:
+            try:
+                df = yf.download(ticker, start=start, end=end, interval=interval,
+                                   auto_adjust=True, progress=False)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                if not df.empty:
+                    intraday_data[ticker] = df[["Open", "High", "Low", "Close", "Volume"]]
+            except Exception as e:
+                print(f"  Failed to fetch {ticker}: {e}")
+
+        time.sleep(pause)
+
+    return intraday_data
+
+
+def compute_vwap(intraday_df):
+    """
+    Computes VWAP (volume-weighted average price) per trading day for
+    a single ticker's intraday OHLCV DataFrame. VWAP resets each day
+    (standard convention), using typical price (H+L+C)/3 weighted by
+    volume.
+    """
+    df = intraday_df.copy()
+    df["date"] = df.index.date
+    df["typical_price"] = (df["High"] + df["Low"] + df["Close"]) / 3
+    df["tp_volume"] = df["typical_price"] * df["Volume"]
+
+    df["cum_tp_volume"] = df.groupby("date")["tp_volume"].cumsum()
+    df["cum_volume"] = df.groupby("date")["Volume"].cumsum()
+    df["vwap"] = df["cum_tp_volume"] / df["cum_volume"]
+
+    return df.drop(columns=["date", "typical_price", "tp_volume", "cum_tp_volume", "cum_volume"])
+
+
+def save_intraday_data(intraday_data, data_dir=None):
+    data_dir = data_dir or DATA_DIR
+    intraday_dir = data_dir / "intraday"
+    intraday_dir.mkdir(parents=True, exist_ok=True)
+
+    for ticker, df in intraday_data.items():
+        df.to_csv(intraday_dir / f"{ticker}_intraday.csv")
+
+    print(f"Saved intraday data for {len(intraday_data)} tickers to {intraday_dir}/")

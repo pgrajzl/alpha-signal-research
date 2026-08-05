@@ -11,6 +11,8 @@ import ipywidgets as widgets
 from IPython.display import display
 from pathlib import Path
 
+import pandas as pd
+
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 plt.rcParams["font.family"] = "serif"
@@ -370,6 +372,93 @@ def build_macro_explorer(macro_df, series_labels=None):
             plt.show()
 
     series_dropdown.observe(redraw, names="value")
+    range_dropdown.observe(redraw, names="value")
+
+    display(controls, output)
+    redraw()
+
+from src.fetch_data import compute_vwap
+
+INTRADAY_RANGE_OPTIONS = {
+    "1D": 1,
+    "3D": 3,
+    "1W": 7,
+    "2W": 14,
+    "All": None,
+}
+
+
+def build_vwap_explorer(intraday_data):
+    """
+    Interactive dashboard: pick any ticker with available intraday
+    data and a time range (last day, 3 days, week, etc.), and plot
+    price alongside its VWAP over that window.
+    """
+    all_tickers = sorted(intraday_data.keys())
+
+    ticker_dropdown = widgets.Dropdown(
+        options=all_tickers,
+        value=all_tickers[0],
+        description="Ticker:",
+    )
+    range_dropdown = widgets.Dropdown(
+        options=["1D", "3D", "1W", "2W", "1M", "All"],
+        value="1W",
+        description="Range:",
+    )
+
+    controls = widgets.HBox([ticker_dropdown, range_dropdown])
+    output = widgets.Output()
+
+    range_to_days = {"1D": 1, "3D": 3, "1W": 7, "2W": 14, "1M": 30, "All": None}
+
+    def redraw(change=None):
+        output.clear_output(wait=True)
+        ticker = ticker_dropdown.value
+        range_label = range_dropdown.value
+
+        df = compute_vwap(intraday_data[ticker])
+
+        n_days = range_to_days[range_label]
+        if n_days is not None:
+            cutoff = df.index.max() - pd.Timedelta(days=n_days)
+            plot_df = df[df.index >= cutoff]
+        else:
+            plot_df = df
+
+        with output:
+            if plot_df.empty:
+                print(f"No data available for {ticker} in this range.")
+                return
+
+            # Plot against a sequential position index instead of real
+            # timestamps, so gaps (nights, weekends) don't draw as flat/
+            # diagonal lines. Then manually relabel ticks with real dates.
+            x = range(len(plot_df))
+
+            fig, ax = plt.subplots(figsize=(12, 5.5))
+            ax.plot(x, plot_df["Close"].values, color="black", linewidth=1.5, label="Price")
+            ax.plot(x, plot_df["vwap"].values, color="orange", linewidth=1.3,
+                    linestyle="--", label="VWAP")
+
+            # Choose a reasonable number of tick labels (~8) spread across the range
+            n_ticks = min(8, len(plot_df))
+            tick_positions = [int(i) for i in pd.Series(range(len(plot_df))).quantile(
+                [i / (n_ticks - 1) for i in range(n_ticks)]
+            )]
+            tick_labels = [plot_df.index[pos].strftime("%m/%d %H:%M") for pos in tick_positions]
+
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+
+            ax.set_title(f"{ticker} — Price vs. VWAP ({range_label})")
+            ax.set_ylabel("Price ($)")
+            ax.legend(loc="upper left")
+            ax.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+
+    ticker_dropdown.observe(redraw, names="value")
     range_dropdown.observe(redraw, names="value")
 
     display(controls, output)
